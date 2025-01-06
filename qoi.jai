@@ -12,7 +12,7 @@ Qoi_Desc :: struct {
     colorspace : Qoi_Format;
 }
 
-qoi_encode :: inline (pixels: []u8, desc: Qoi_Desc) -> bool, []u8 {
+qoi_encode :: inline (pixels: []u8, desc: Qoi_Desc) -> []u8, bool {
 
     qoi_rgba_t :: union {
         using rgba: struct { r, g, b, a: u8; };
@@ -65,7 +65,7 @@ qoi_encode :: inline (pixels: []u8, desc: Qoi_Desc) -> bool, []u8 {
         desc.channels < 3   || desc.channels > 4   ||
         desc.colorspace > 1 ||
         desc.height >= QOI_PIXELS_MAX / desc.width
-    return false, .[];
+    return .[], false;
 
     max_size : u32 = desc.width * desc.height * (desc.channels + 1) + QOI_HEADER_SIZE + qoi_padding.count;
 
@@ -73,7 +73,7 @@ qoi_encode :: inline (pixels: []u8, desc: Qoi_Desc) -> bool, []u8 {
 
     bytes : [..]u8;
     array_resize(*bytes, max_size);
-    if bytes.data == null || bytes.count == 0 return false, .[];
+    if bytes.data == null || bytes.count == 0 return .[], false;
 
     qoi_write_32(QOI_MAGIC);
     qoi_write_32(desc.width);
@@ -154,11 +154,11 @@ qoi_encode :: inline (pixels: []u8, desc: Qoi_Desc) -> bool, []u8 {
 
     bytes.count = p;
 
-    return true, bytes;
+    return bytes, true;
 }
 
 
-qoi_decode :: inline (bytes: []u8, channels : u8 = 0) -> bool, []u8, Qoi_Desc {
+qoi_decode :: inline (bytes: []u8, channels : u8 = 0) -> []u8, Qoi_Desc, bool {
 
     qoi_rgba_t :: union {
         using rgba: struct { r, g, b, a: u8; };
@@ -211,12 +211,12 @@ qoi_decode :: inline (bytes: []u8, channels : u8 = 0) -> bool, []u8, Qoi_Desc {
     if  bytes.data == null ||
         (channels != 0 && channels != 3 && channels != 4) ||
         bytes.count < QOI_HEADER_SIZE + qoi_padding.count
-    return false, .[], desc;
+    return .[], desc, false;
 
     p : u32 = 0;
 
     magic : u32 = qoi_read_32();
-    if magic != QOI_MAGIC return false, .[], desc;
+    if magic != QOI_MAGIC return .[], desc, false;
 
     desc.width      = qoi_read_32();
     desc.height     = qoi_read_32();
@@ -229,7 +229,7 @@ qoi_decode :: inline (bytes: []u8, channels : u8 = 0) -> bool, []u8, Qoi_Desc {
         desc.channels > 4 ||
         colorspace > 1    ||
         desc.height >= QOI_PIXELS_MAX / desc.width
-    return false, .[], desc;
+    return .[], desc, false;
 
     desc.colorspace = xx colorspace;
 
@@ -240,7 +240,7 @@ qoi_decode :: inline (bytes: []u8, channels : u8 = 0) -> bool, []u8, Qoi_Desc {
     pixels : [..]u8;
     array_resize(*pixels, px_len);
     if pixels.data == null || pixels.count == 0
-        return false, .[], desc;
+        return .[], desc, false;
 
     index : [64]qoi_rgba_t;
     px    : qoi_rgba_t;
@@ -288,7 +288,7 @@ qoi_decode :: inline (bytes: []u8, channels : u8 = 0) -> bool, []u8, Qoi_Desc {
         px_pos += channels;
     }
 
-    return true, pixels, desc;
+    return pixels, desc, true;
 }
 
 #if QOI_STDIO {
@@ -296,22 +296,22 @@ qoi_decode :: inline (bytes: []u8, channels : u8 = 0) -> bool, []u8, Qoi_Desc {
 #import "File";
 
 qoi_write :: inline (filename: string, pixels: []u8, desc: Qoi_Desc) -> u32 {
-    ok, bytes := qoi_encode(pixels, desc);
+    bytes, ok := qoi_encode(pixels, desc);
     if !ok || !write_entire_file(filename, bytes.data, bytes.count) return 0;
     else return cast(u32) bytes.count;
 }
 
-qoi_read :: inline (filename: string, channels : u8 = 0) -> bool, []u8, Qoi_Desc {
+qoi_read :: inline (filename: string, channels : u8 = 0) -> []u8, Qoi_Desc, bool {
     file, ok := read_entire_file(filename);
     desc : Qoi_Desc = ---;
-    if !ok return false, .[], desc;
+    if !ok return .[], desc, false;
     else {
         f: []u8 = ---;
         f.data = file.data;
         f.count = file.count;
 
-        ok, pixels, desc := qoi_decode(f, channels);
-        return ok, pixels, desc;
+        pixels, desc, ok := qoi_decode(f, channels);
+        return pixels, desc, ok;
     }
 }
 
