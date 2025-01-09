@@ -1,8 +1,8 @@
 #import "Basic";
 
 Qoi_Format :: enum u8 {
-    QOI_SRGB   :: 0;
-    QOI_LINEAR :: 1;
+    SRGB   :: 0;
+    LINEAR :: 1;
 }
 
 Qoi_Desc :: struct {
@@ -12,7 +12,18 @@ Qoi_Desc :: struct {
     colorspace : Qoi_Format;
 }
 
-qoi_encode :: inline (pixels: []u8, desc: Qoi_Desc) -> []u8, bool {
+qoi_encode :: inline (pixels: []u8, width: u32, height: u32, channels : u8 = 0, colorspace : Qoi_Format = .SRGB) -> []u8 #must, bool {
+    desc : Qoi_Desc = ---;
+    desc.width      = width;
+    desc.height     = height;
+    desc.channels   = channels;
+    desc.colorspace = colorspace;
+
+    bytes, ok := qoi_encode(pixels, desc);
+    return bytes, ok;
+}
+
+qoi_encode :: (pixels: []u8, desc: Qoi_Desc) -> []u8 #must, bool {
 
     qoi_rgba_t :: union {
         using rgba: struct { r, g, b, a: u8; };
@@ -158,7 +169,7 @@ qoi_encode :: inline (pixels: []u8, desc: Qoi_Desc) -> []u8, bool {
 }
 
 
-qoi_decode :: inline (bytes: []u8, channels : u8 = 0) -> []u8, Qoi_Desc, bool {
+qoi_decode :: (bytes: []u8, channels : u8 = 0) -> []u8 #must, Qoi_Desc #must, bool {
 
     qoi_rgba_t :: union {
         using rgba: struct { r, g, b, a: u8; };
@@ -295,24 +306,29 @@ qoi_decode :: inline (bytes: []u8, channels : u8 = 0) -> []u8, Qoi_Desc, bool {
 
 #import "File";
 
+qoi_write :: inline (pixels: []u8, width: u32, height: u32, channels : u8 = 0, colorspace : Qoi_Format = .SRGB) -> u32 {
+    bytes, ok := qoi_encode(pixels, width, height, channels, colorspace);
+    if !ok || !write_entire_file(filename, bytes.data, bytes.count) return 0;
+    else return cast(u32) bytes.count;
+}
+
 qoi_write :: inline (filename: string, pixels: []u8, desc: Qoi_Desc) -> u32 {
     bytes, ok := qoi_encode(pixels, desc);
     if !ok || !write_entire_file(filename, bytes.data, bytes.count) return 0;
     else return cast(u32) bytes.count;
 }
 
-qoi_read :: inline (filename: string, channels : u8 = 0) -> []u8, Qoi_Desc, bool {
+qoi_read :: inline (filename: string, channels : u8 = 0) -> []u8 #must, Qoi_Desc #must, bool {
     file, ok := read_entire_file(filename);
     desc : Qoi_Desc = ---;
     if !ok return .[], desc, false;
-    else {
-        f: []u8 = ---;
-        f.data = file.data;
-        f.count = file.count;
 
-        pixels, desc, ok := qoi_decode(f, channels);
-        return pixels, desc, ok;
-    }
+    f: []u8 = ---;
+    f.data = file.data;
+    f.count = file.count;
+
+    pixels, desc, ok := qoi_decode(f, channels);
+    return pixels, desc, ok;
 }
 
 } // QOI_STDIO
