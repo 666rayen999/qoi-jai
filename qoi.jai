@@ -13,20 +13,18 @@ Qoi_Desc :: struct {
 }
 
 qoi_encode :: inline (pixels: []u8, width: u32, height: u32, channels : u8 = 0, colorspace : Qoi_Format = .SRGB) -> []u8 #must, bool {
-    desc : Qoi_Desc = ---;
-    desc.width      = width;
-    desc.height     = height;
-    desc.channels   = channels;
-    desc.colorspace = colorspace;
-
-    bytes, ok := qoi_encode(pixels, desc);
+    bytes, ok := qoi_encode(pixels, .{
+        width      = width,
+        height     = height,
+        channels   = channels,
+        colorspace = colorspace,
+    });
     return bytes, ok;
 }
 
 qoi_encode :: (pixels: []u8, desc: Qoi_Desc) -> []u8 #must, bool {
-
-    qoi_rgba_t :: union {
-        using rgba: struct { r, g, b, a: u8; };
+    Qoi_Pixel :: union {
+        struct { r, g, b, a: u8; };
         v: u32;
     }
 
@@ -39,9 +37,7 @@ qoi_encode :: (pixels: []u8, desc: Qoi_Desc) -> []u8 #must, bool {
     };
 
     QOI_HEADER_SIZE :: 14;
-
     qoi_padding : [8]u8 : .[0,0,0,0,0,0,0,1];
-
     QOI_PIXELS_MAX : u32 : 400000000;
 
     QOI_OP_INDEX : u8 : 0x00;
@@ -50,26 +46,19 @@ qoi_encode :: (pixels: []u8, desc: Qoi_Desc) -> []u8 #must, bool {
     QOI_OP_RUN   : u8 : 0xc0;
     QOI_OP_RGB   : u8 : 0xfe;
     QOI_OP_RGBA  : u8 : 0xff;
-
     QOI_MASK_2   : u8 : 0xc0;
 
-    color_hash :: inline (using color: qoi_rgba_t) -> u8 {
-        return (r*3 + g*5 + b*7 + a*11) & 63;
-    }
-
-    qoi_write_8 :: inline (x: u8) #expand {
-        `bytes[`p] = x;
-        `p += 1;
-    }
-
+    color_hash :: inline (using color: Qoi_Pixel) -> u8 { return (r*3 + g*5 + b*7 + a*11) & 63; }
+    qoi_write_8 :: inline (x: u8) #expand { `bytes[`p] = x; `p += 1; }
     qoi_write_32 :: inline (v: u32) #expand {
-        `bytes[`p] = cast(u8) (v >> 24);          `p += 1;
-        `bytes[`p] = cast(u8) ((v >> 16) & 0xFF); `p += 1;
-        `bytes[`p] = cast(u8) ((v >> 8) & 0xFF);  `p += 1;
-        `bytes[`p] = cast(u8) (v & 0xFF);         `p += 1;
+        `bytes[`p] = cast,no_check(u8) (v >> 24);
+        `bytes[`p+1] = cast,no_check(u8) (v >> 16);
+        `bytes[`p+2] = cast,no_check(u8) (v >> 8);
+        `bytes[`p+3] = cast,no_check(u8) v;
+        `p += 4;
     }
 
-    index : [64]qoi_rgba_t;
+    index : [64]Qoi_Pixel;
 
     if  pixels.count == 0   || pixels.data == null ||
         desc.width == 0     || desc.height == 0    ||
@@ -82,9 +71,8 @@ qoi_encode :: (pixels: []u8, desc: Qoi_Desc) -> []u8 #must, bool {
 
     p : u32 = 0;
 
-    bytes : [..]u8;
-    array_resize(*bytes, max_size);
-    if bytes.data == null || bytes.count == 0 return .[], false;
+    bytes : []u8 = .{ max_size, alloc(max_size) };
+    if bytes.data == null return .[], false;
 
     qoi_write_32(QOI_MAGIC);
     qoi_write_32(desc.width);
@@ -93,8 +81,8 @@ qoi_encode :: (pixels: []u8, desc: Qoi_Desc) -> []u8 #must, bool {
     qoi_write_8(cast(u8) desc.colorspace);
 
     run       : u8 = 0;
-    px        : qoi_rgba_t;
-    px_prev   : qoi_rgba_t;
+    px        : Qoi_Pixel;
+    px_prev   : Qoi_Pixel;
     px.a      = 0xFF;
     px_prev.a = 0xFF;
 
@@ -136,10 +124,10 @@ qoi_encode :: (pixels: []u8, desc: Qoi_Desc) -> []u8 #must, bool {
                     vg_b := vb - vg;
 
                     if vr > -3 && vr < 2 && vg > -3 && vg < 2 && vb > -3 && vb < 2
-                        qoi_write_8(QOI_OP_DIFF | cast(u8) (((vr + 2) << 4) | ((vg + 2) << 2) | (vb + 2)));
+                        qoi_write_8(QOI_OP_DIFF | cast,no_check(u8) (((vr + 2) << 4) | ((vg + 2) << 2) | (vb + 2)));
                     else if vg_r > -9 && vg_r < 8 && vg > -33 && vg < 32 && vg_b > -9 && vg_b < 8 {
-                        qoi_write_8(QOI_OP_LUMA | cast(u8) (vg + 32));
-                        qoi_write_8(cast(u8) ((vg_r + 8) << 4 | (vg_b + 8)));
+                        qoi_write_8(QOI_OP_LUMA | cast,no_check(u8) (vg + 32));
+                        qoi_write_8(cast,no_check(u8) ((vg_r + 8) << 4 | (vg_b + 8)));
                     } else {
                         qoi_write_8(QOI_OP_RGB);
                         qoi_write_8(px.r);
@@ -157,7 +145,6 @@ qoi_encode :: (pixels: []u8, desc: Qoi_Desc) -> []u8 #must, bool {
         }
 
         px_prev = px;
-
         px_pos += channels;
     }
 
@@ -170,9 +157,8 @@ qoi_encode :: (pixels: []u8, desc: Qoi_Desc) -> []u8 #must, bool {
 
 
 qoi_decode :: (bytes: []u8, channels : u8 = 0) -> []u8 #must, Qoi_Desc #must, bool {
-
-    qoi_rgba_t :: union {
-        using rgba: struct { r, g, b, a: u8; };
+    Qoi_Pixel :: union {
+        struct { r, g, b, a: u8; };
         v: u32;
     }
 
@@ -185,9 +171,7 @@ qoi_decode :: (bytes: []u8, channels : u8 = 0) -> []u8 #must, Qoi_Desc #must, bo
     };
 
     QOI_HEADER_SIZE :: 14;
-
     qoi_padding : [8]u8 : .[0,0,0,0,0,0,0,1];
-
     QOI_PIXELS_MAX : u32 : 400000000;
 
     QOI_OP_INDEX : u8 : 0x00;
@@ -196,25 +180,18 @@ qoi_decode :: (bytes: []u8, channels : u8 = 0) -> []u8 #must, Qoi_Desc #must, bo
     QOI_OP_RUN   : u8 : 0xc0;
     QOI_OP_RGB   : u8 : 0xfe;
     QOI_OP_RGBA  : u8 : 0xff;
-
     QOI_MASK_2   : u8 : 0xc0;
 
-    qoi_read_8 :: inline () -> u8 #expand {
-        x : u8 = `bytes[`p]; `p += 1;
-        return x;
-    }
-
+    color_hash :: inline (using color: Qoi_Pixel) -> u8 { return (r*3 + g*5 + b*7 + a*11) & 63; }
+    qoi_read_8 :: inline () -> u8 #expand { x : u8 = `bytes[`p]; `p += 1; return x; }
     qoi_read_32 :: inline () -> u32 #expand {
-        a : u32 = `bytes[`p]; `p += 1;
-        b : u32 = `bytes[`p]; `p += 1;
-        c : u32 = `bytes[`p]; `p += 1;
-        d : u32 = `bytes[`p]; `p += 1;
+        a : u32 = `bytes[`p];
+        b : u32 = `bytes[`p+1];
+        c : u32 = `bytes[`p+2];
+        d : u32 = `bytes[`p+3];
+        `p += 4;
         res: u32 = (a << 24) | (b << 16) | (c << 8) | d;
         return res;
-    }
-
-    color_hash :: inline (using color: qoi_rgba_t) -> u8 {
-        return (r*3 + g*5 + b*7 + a*11) & 63;
     }
 
     desc : Qoi_Desc = ---;
@@ -232,7 +209,7 @@ qoi_decode :: (bytes: []u8, channels : u8 = 0) -> []u8 #must, Qoi_Desc #must, bo
     desc.width      = qoi_read_32();
     desc.height     = qoi_read_32();
     desc.channels   = qoi_read_8();
-    colorspace  : u8 = qoi_read_8();
+    colorspace : u8 = qoi_read_8();
 
     if  desc.width == 0   ||
         desc.height == 0  ||
@@ -248,17 +225,15 @@ qoi_decode :: (bytes: []u8, channels : u8 = 0) -> []u8 #must, Qoi_Desc #must, bo
 
     px_len : u32 = desc.width * desc.height * channels;
 
-    pixels : [..]u8;
-    array_resize(*pixels, px_len);
-    if pixels.data == null || pixels.count == 0
-        return .[], desc, false;
+    pixels : []u8 = .{ px_len, alloc(px_len) };
+    if pixels.data == null return .[], desc, false;
 
-    index : [64]qoi_rgba_t;
-    px    : qoi_rgba_t;
+    index : [64]Qoi_Pixel;
+    px    : Qoi_Pixel;
     px.a  = 0xFF;
 
     run : u8 = 0;
-    chunks_len : u32 = cast(u32) bytes.count - qoi_padding.count;
+    chunks_len : u32 = cast(u32) (bytes.count - qoi_padding.count);
 
     px_pos : u32 = 0;
     while px_pos < px_len {
@@ -280,11 +255,11 @@ qoi_decode :: (bytes: []u8, channels : u8 = 0) -> []u8 #must, Qoi_Desc #must, bo
                 px.g += ((b1 >> 2) & 0x03) - 2;
                 px.b += ( b1       & 0x03) - 2;
             } else if (b1 & QOI_MASK_2) == QOI_OP_LUMA {
-                b2 : s8 = cast(s8) qoi_read_8();
-                vg : s8 = (cast(s8) (b1 & 0x3f)) - 32;
-                px.r += cast(u8) (vg - 8 + ((b2 >> 4) & 0x0f));
-                px.b += cast(u8) (vg - 8 + (b2        & 0x0f));
-                px.g += cast(u8) vg;
+                b2 : s8 = cast,no_check(s8) qoi_read_8();
+                vg : s8 = (cast,no_check(s8) (b1 & 0x3f)) - 32;
+                px.r += cast,no_check(u8) (vg - 8 + ((b2 >> 4) & 0x0f));
+                px.b += cast,no_check(u8) (vg - 8 + (b2        & 0x0f));
+                px.g += cast,no_check(u8) vg;
             } else if (b1 & QOI_MASK_2) == QOI_OP_RUN run = b1 & 0x3f;
 
             index[color_hash(px)] = px;
@@ -302,33 +277,31 @@ qoi_decode :: (bytes: []u8, channels : u8 = 0) -> []u8 #must, Qoi_Desc #must, bo
     return pixels, desc, true;
 }
 
+#if #exists(QOI_STDIO) {
 #if QOI_STDIO {
 
 #import "File";
 
-qoi_write :: inline (pixels: []u8, width: u32, height: u32, channels : u8 = 0, colorspace : Qoi_Format = .SRGB) -> u32 {
+qoi_write :: inline (filename: string, pixels: []u8, width: u32, height: u32, channels : u8 = 0, colorspace : Qoi_Format = .SRGB) -> u32 {
     bytes, ok := qoi_encode(pixels, width, height, channels, colorspace);
     if !ok || !write_entire_file(filename, bytes.data, bytes.count) return 0;
-    else return cast(u32) bytes.count;
+    else return xx bytes.count;
 }
 
 qoi_write :: inline (filename: string, pixels: []u8, desc: Qoi_Desc) -> u32 {
     bytes, ok := qoi_encode(pixels, desc);
     if !ok || !write_entire_file(filename, bytes.data, bytes.count) return 0;
-    else return cast(u32) bytes.count;
+    else return xx bytes.count;
 }
 
 qoi_read :: inline (filename: string, channels : u8 = 0) -> []u8 #must, Qoi_Desc #must, bool {
-    file, ok := read_entire_file(filename);
-    desc : Qoi_Desc = ---;
-    if !ok return .[], desc, false;
+    file, k := read_entire_file(filename);
+    d : Qoi_Desc = ---;
+    if !k return .[], d, false;
 
-    f: []u8 = ---;
-    f.data = file.data;
-    f.count = file.count;
-
+    f: []u8 = .{ file.count, file.data };
     pixels, desc, ok := qoi_decode(f, channels);
     return pixels, desc, ok;
 }
 
-} // QOI_STDIO
+}} // QOI_STDIO
